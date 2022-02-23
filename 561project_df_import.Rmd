@@ -1,0 +1,729 @@
+---
+title: "DSCI 561 - Group Project"
+author: "Morgan Cox, Alex Gonzales, Kael Kleckner, Andrew Reetz"
+date: "12/13/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen = 1, digits = 3)
+```
+
+
+## Add Libraries
+```{r}
+library(gbm)
+library(e1071)
+library(ISLR)
+library(e1071) # for svm()
+library(EbayesThresh) # for soft and hard thresholding; threshld()
+library(tree) # for decision trees
+library(randomForest)
+library(MASS) # for LDA
+library(stats) # for fft, ifft
+library(RVenn) # for multi-way set intersection
+library(gplots)
+library(wvtool) # for edge detection
+library(scales) # for image re-scaling to work with edge detection
+```
+
+```{r}
+load("./High/high_train.RData")
+load("./Med/med_train.RData")
+load("./Low/low_train.RData")
+load("./High/high_validate.RData")
+load("./Med/med_validate.RData")
+load("./Low/low_validate.RData")
+max_train_index = length(high_train$var) + length(med_train$var) + length(low_train$var)
+max_index = max_train_index + length(high_validate$var) + length(med_validate$var) + length(low_validate$var)
+train_indices = 1:max_train_index
+validate_indices = (max_train_index + 1):max_index
+```
+
+
+```{r}
+rm(df)
+#df = read.csv(file = "C:\\MATH561\\Final Project\\data.csv", header = TRUE)
+df = read.csv(file = "./data.csv", header = TRUE)
+head(df)
+tail(df)
+```
+
+# TODO: Data Exploration
+
+```{r}
+df2 = abs(df[,c(-2)])
+#cbind(df2,df$classification)
+```
+
+Test for the normality of each feature. All are not normal at $\alpha=0.05$ per the Shapiro-Wilk normality test.
+
+```{r}
+shaptestholder = c()
+shaptestpvals = c()
+for (i in c(1:dim(df2)[2])){
+  dat = df2[,i]
+  qqnorm(dat,
+         main=names(df2)[i])
+  qqline(dat,
+         distribution=qnorm,
+         col="red")
+  shaptest = shapiro.test(dat)
+  print(shaptest)
+  alpha = 0.01
+  shaptestresult = shaptest$p.value<alpha
+  shaptestholder[i] = shaptestresult
+  shaptestpvals[i] = shaptest$p.value
+  mtext(text=shaptestresult, 
+        side=4) #  if p value small, reject H0; conclude that data are not normal.
+}
+
+#Returns True if we reject H0 and conclude data are not normal.
+data.frame("Variable Name"=names(df2),
+           "Reject H0: "=shaptestholder,
+           "Shapiro-Wilk Pvals: "=shaptest$p.value)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+boxplot(split(df$sum_sobel, df$classification), main = "Sum of Edge Detection Values", col = c("red", "green", "blue"))
+boxplot(split(df$range_sobel, df$classification), main = "Range of Edge Detection Values", col = c("red", "green", "blue"))
+boxplot(split(df$std_sobel, df$classification), main = "Standard Deviation of Edge Detection Values", col = c("red", "green", "blue"))
+boxplot(split(df$zeroes_sobel, df$classification), main = "Zeroes of Edge Detection Values", col = c("red", "green", "blue"))
+```
+
+## Create a boosted tree model to look at feature importance
+```{r}
+#Strip out response and observations
+rm(validate.X)
+rm(train.X)
+Classes.train = df[train_indices,]$classification
+Classes.validate = df[validate_indices,]$classification
+
+if("sum" %in% colnames(df)){df = subset(df, select = -c(sum, classification))}
+
+train.X = data.frame(df[train_indices,])
+
+validate.X = data.frame(df[validate_indices,])
+
+head(train.X)
+#tail(train.X)
+head(validate.X)
+#tail(validate.X)
+```
+
+
+```{r}
+#Boosted Tree model
+set.seed(5)
+tree_count = 300
+boost.comp = gbm(Classes.train~., data = train.X, n.trees = tree_count, shrinkage = 0.01, cv.folds = 10, interaction.depth = 5)
+summary(boost.comp)
+par(mfrow = c(1,2))
+plot(boost.comp, i="snrsoft30")
+plot(boost.comp, i="snr")
+
+#Make predictions on the validation dataset
+pred.validate = predict(boost.comp, validate.X, n.trees = tree_count, type = "response")
+labels = colnames(pred.validate)[apply(pred.validate, 1, which.max)]
+result = data.frame(Classes.validate, labels)
+print(result)
+table(labels, Classes.validate)
+boost.accuracy = mean(labels == Classes.validate)
+print(boost.accuracy)
+```
+
+```{r}
+#Create a tuned boosted tree model, tune don't work?
+#tuned_gbm = tune(gbm, Classes.train~., data = train.X, ranges = list(distribution = c("multinomial"), n.trees = c(60, 80, 100, 150, 200, 250), shrinkage = c(0.001, 0.01, 0.1, 0.2), interaction.depth = c(1, 2)))
+```
+
+
+
+```{r}
+set.seed(1)
+library(class)
+knn.pred = knn(train.X, validate.X, Classes.train, k = 1)
+mean(knn.pred == Classes.validate)
+table(knn.pred, Classes.validate)
+```
+
+## Make pretty plots for various values of k
+```{r}
+ks = c(1:150)
+train.accuracy = rep(0, length(ks))
+validate.accuracy = rep(0, length(ks))
+for(k in ks){
+  model.knn.train = knn(train.X, train.X, Classes.train, k = k)
+  train.accuracy[k] = mean(model.knn.train == Classes.train)
+  model.knn.validate = knn(train.X, validate.X, Classes.train, k = k)
+  validate.accuracy[k] = mean(model.knn.validate == Classes.validate)
+}
+
+best.k = ks[which.max(validate.accuracy)]
+print(best.k)
+
+plot(ks, train.accuracy, col = "red", type = "b", ylim = c(0.3, 1), main = "Training and Validation Accuracy", ylab = "Prediction Accuracy", xlab = "K Nearest Neighbors")
+points(ks, validate.accuracy, col = "blue", type = "b")
+legend("topright", legend = c("Training Accuracy", "Validation Accuracy"), col = c("red", "blue"), lty = 1:2, cex = 0.8)
+```
+
+## Normalize the features
+```{r}
+nor <- function(x){(x-min(x))/(max(x)-min(x))}
+train.X.norm <- as.data.frame(lapply(train.X, nor))
+validate.X.norm <- as.data.frame(lapply(validate.X, nor))
+
+set.seed(1)
+library(class)
+knn.pred.norm = knn(train.X.norm, validate.X.norm, Classes.train, k = 68)
+mean(knn.pred.norm == Classes.validate)
+table(knn.pred.norm, Classes.validate)
+```
+
+```{r}
+ks = c(1:150)
+train.accuracy.norm = rep(0, length(ks))
+validate.accuracy.norm = rep(0, length(ks))
+for(k in ks){
+  model.knn.train = knn(train.X.norm, train.X.norm, Classes.train, k = k)
+  train.accuracy.norm[k] = mean(model.knn.train == Classes.train)
+  model.knn.validate = knn(train.X.norm, validate.X.norm, Classes.train, k = k)
+  validate.accuracy.norm[k] = mean(model.knn.validate == Classes.validate)
+}
+
+best.k.norm = ks[which.max(validate.accuracy.norm)]
+print(best.k.norm)
+
+plot(ks, train.accuracy.norm, col = "red", type = "b", ylim = c(0.3, 1), main = "Training and Validation Accuracy Using Normalized Features", ylab = "Prediction Accuracy", xlab = "K Nearest Neighbors")
+points(ks, validate.accuracy.norm, col = "blue", type = "b")
+legend("topright", legend = c("Training Accuracy", "Validation Accuracy"), col = c("red", "blue"), lty = 1:2, cex = 0.8)
+```
+
+## SVM Training
+
+##  Model Selection & Performance Evaluation
+
+```{r}
+set.seed(12)
+costrange = c(0.01, 0.1, 1, 10, 1000)
+gammarange = c(0.1, 1, 10)
+
+tune.df = cbind(Classes.train, train.X)
+
+tunedlinearsvm = tune(svm, 
+                      Classes.train~., 
+                      data=tune.df,
+                      ranges=list(kernel=c("linear"),
+                                  cost=costrange
+                                  )
+                      ) 
+
+tunedradialsvm = tune(svm, 
+                      Classes.train~., 
+                      data=tune.df,
+                      ranges=list(kernel=c("radial"), 
+                                  cost=costrange,
+                                  gamma=gammarange)
+                      )
+
+tunedpolynomialsvm = tune(svm, 
+                          Classes.train~., 
+                          data=tune.df,
+                          ranges=list(kernel=c("polynomial"), 
+                                      degree=c(1, 2, 3), 
+                                      cost=costrange, 
+                                      gamma=gammarange)) 
+
+```
+
+### SVM Model Summary
+
+```{r}
+summary(tunedlinearsvm)
+print(c("linear svm accuracy: ",
+        mean(predict(tunedlinearsvm$best.model, 
+                     validate.X)==Classes.validate)))
+
+summary(tunedradialsvm)
+print(c("radial svm accuracy: ",
+        mean(predict(tunedradialsvm$best.model, 
+                     validate.X)==Classes.validate)))
+
+summary(tunedpolynomialsvm)
+print(c("polynomial svm accuracy: ",
+        mean(predict(tunedpolynomialsvm$best.model, 
+                     validate.X)==Classes.validate)))
+
+```
+
+## Tune over Random Forest
+
+### Tune
+```{r}
+set.seed(1)
+tunedrf = tune(randomForest, 
+               Classes.train~., 
+               data=tune.df, # 
+               ranges=list(mtry=seq(1,length(names(df))-1), # use all response cols.
+                           ntree=c(10, 50, 100, 500),
+                           importance=T))
+```
+
+### RF Summary
+```{r}
+set.seed(1)
+summary(tunedrf)
+print(c("Tuned RandomForest Accuracy: ",
+        mean(predict(tunedrf$best.model, 
+                     validate.X)==Classes.validate)))
+```
+
+## SVC Training
+### SVC training & evaluation
+```{r}
+
+# SVC Model Training
+svm1 = svm(Classes.train~zeroes+snrsoft10+snrsoft20+snrhard20+pca_sum_2+pca_sum_1, method="C-classification", kernel="radial", data=train.X, cost=10, gamma=0.1)
+
+# Make preds on validate set
+val_preds = predict(svm1, validate.X)
+xtab = table(Classes.validate, val_preds)
+xtab
+
+high_t = xtab[1,"high"]
+med_t = xtab[3,"med"]
+low_t = xtab[2,"low"]
+
+# Test ACC Results
+length(Classes.validate)
+val_acc = (high_t+med_t+low_t)/length(Classes.validate)
+val_acc
+
+
+
+### Training Acc
+# Make preds on train set
+train_preds = predict(svm1, train.X)
+xtab = table(Classes.train, train_preds)
+xtab
+
+high_t = xtab[1,"high"]
+med_t = xtab[3,"med"]
+low_t = xtab[2,"low"]
+
+# Train ACC Results
+length(Classes.train)
+val_acc = (high_t+med_t+low_t)/length(Classes.train)
+val_acc
+
+```
+
+# Import the Test dataset and create the required features
+```{r}
+load("./test.RData")
+test_df$var
+
+SNR <- function(arr){mean(arr)/sd(arr)}
+
+test.X = data.frame()
+
+l <- length(test_df$mat)
+
+zero_feature = rep(NA, l)
+range_feature = rep(NA, l)
+stdev_feature = rep(NA, l)
+iqr_feature = rep(NA, l)
+mean_feature = rep(NA, l)
+sum_feature = rep(NA, l)
+snr = rep(NA, l)
+
+for(j in 1:l){
+    sum_feature[j] <- sum(test_df$mat[[j]])
+    zero_feature[j] <- sum(test_df$mat[[j]] == 0)
+    range_feature[j] <- max(test_df$mat[[j]]) - min(test_df$mat[[j]])
+    stdev_feature[j] <- sd(test_df$mat[[j]])
+    iqr_feature[j] <- IQR(test_df$mat[[j]])
+    mean_feature[j] <- mean(test_df$mat[[j]])
+    snr[j] <- SNR(test_df$mat[[j]])
+}
+
+test.X <- data.frame(
+  "sum"=sum_feature, 
+  "zeroes"=zero_feature, 
+  "range"=range_feature, 
+  "stdev"=stdev_feature, 
+  "iqr"=iqr_feature, 
+  "imgmean"=mean_feature, 
+  "snr"=snr
+  )
+
+# Check that the data frame has been updated successfully.
+head(test.X)
+tail(test.X)
+
+```
+## Thresholding Feature Creation
+```{r}
+thresh=0.1
+
+snrsoft10 = rep(NA, l) 
+zeroessnrsoft10 = rep(NA, l)
+snrhard10 = rep(NA, l) 
+zeroessnrhard10 = rep(NA, l)
+
+for(j in 1:l){
+    mat = test_df$mat[[j]]
+    threshedmat_soft = threshld(x=mat,
+                           t=(max(mat)-min(mat))*thresh,
+                           hard=F)
+    threshedmat_hard = threshld(x=mat,
+                           t=(max(mat)-min(mat))*thresh,
+                           hard=T)
+    snrsoft10[j] <- SNR(threshedmat_soft)
+    zeroessnrsoft10[j] <- sum(threshedmat_soft==0)
+    snrhard10[j] <- SNR(threshedmat_hard)
+    zeroessnrhard10[j] <- sum(threshedmat_hard==0)
+    
+}
+
+test.X <- cbind(test.X, data.frame("snrsoft10"=snrsoft10, "zeroessnrsoft10"=snrsoft10, "snrhard10"=snrhard10, "zeroessnrhard10"=zeroessnrhard10))
+
+# Check that the data frame has been updated successfully.
+head(test.X)
+tail(test.X)
+  
+```
+
+```{r}
+thresh=0.2
+
+snrsoft20 = rep(NA, l) 
+zeroessnrsoft20 = rep(NA, l)
+snrhard20 = rep(NA, l) 
+zeroessnrhard20 = rep(NA, l)
+
+for(j in 1:l){
+    mat = test_df$mat[[j]]
+    threshedmat_soft = threshld(x=mat,
+                           t=(max(mat)-min(mat))*thresh,
+                           hard=F)
+    threshedmat_hard = threshld(x=mat,
+                           t=(max(mat)-min(mat))*thresh,
+                           hard=T)
+    snrsoft20[j] <- SNR(threshedmat_soft)
+    zeroessnrsoft20[j] <- sum(threshedmat_soft==0)
+    snrhard20[j] <- SNR(threshedmat_hard)
+    zeroessnrhard20[j] <- sum(threshedmat_hard==0)
+    
+}
+
+test.X <- cbind(test.X, data.frame("snrsoft20"=snrsoft20, "zeroessnrsoft20"=snrsoft20, "snrhard20"=snrhard20, "zeroessnrhard20"=zeroessnrhard20))
+
+# Check that the data frame has been updated successfully.
+head(test.X)
+tail(test.X)
+
+```
+
+```{r}
+thresh=0.3
+
+snrsoft30 = rep(NA, l) 
+zeroessnrsoft30 = rep(NA, l)
+snrhard30 = rep(NA, l) 
+zeroessnrhard30 = rep(NA, l)
+
+for(j in 1:l){
+    mat = test_df$mat[[j]]
+    threshedmat_soft = threshld(x=mat,
+                           t=(max(mat)-min(mat))*thresh,
+                           hard=F)
+    threshedmat_hard = threshld(x=mat,
+                           t=(max(mat)-min(mat))*thresh,
+                           hard=T)
+    snrsoft30[j] <- SNR(threshedmat_soft)
+    zeroessnrsoft30[j] <- sum(threshedmat_soft==0)
+    snrhard30[j] <- SNR(threshedmat_hard)
+    zeroessnrhard30[j] <- sum(threshedmat_hard==0)
+    
+}
+
+test.X <- cbind(test.X, data.frame("snrsoft30"=snrsoft30, "zeroessnrsoft30"=snrsoft30, "snrhard30"=snrhard30, "zeroessnrhard30"=zeroessnrhard30))
+
+# Check that the data frame has been updated successfully.
+head(test.X)
+tail(test.X)
+
+```
+
+##Shannon Entropy Feature Creation
+```{r}
+shannon.entropy = function(mat) {
+  densities = hist(mat, plot=F)$counts/length(mat)
+  densities[densities==0] <- NA
+  clean_densities = na.omit(densities)
+  entropy = -sum(clean_densities * log(clean_densities))
+  return(entropy)
+}
+
+shannonentropy = rep(NA, l)
+for(j in 1:l){
+    shannonentropy[j] <- shannon.entropy(test_df$mat[[j]])
+}
+
+test.X <- cbind(test.X, data.frame("shannonentropy"=shannonentropy))
+
+# Check that the data frame has been updated successfully.
+head(test.X)
+tail(test.X)
+
+```
+
+##PCA Feature Creation
+```{r}
+pca_feature = rep(NA, l)
+
+for(j in 1:l){
+    # Calculate the information for PC explained variance
+    pcs <- prcomp(test_df$mat[[j]])
+    std_dev <- pcs$sdev
+    pr_var <- std_dev^2
+    prop_varex <- pr_var/sum(pr_var)
+   
+    pca_feature[j] = sum(prop_varex[1:2])
+}
+
+test.X <- cbind(test.X, data.frame("pca_sum_2"=pca_feature))
+```
+
+```{r}
+pca_feature = rep(NA, l)
+
+for(j in 1:l){
+    # Calculate the information for PC explained variance
+    pcs <- prcomp(test_df$mat[[j]])
+    std_dev <- pcs$sdev
+    pr_var <- std_dev^2
+    prop_varex <- pr_var/sum(pr_var)
+   
+    pca_feature[j] = sum(prop_varex[1:1])
+    }
+
+test.X <- cbind(test.X, data.frame("pca_sum_1"=pca_feature))
+
+# Check that the data frame has been updated successfully.
+head(test.X)
+tail(test.X)
+
+```
+
+## Edge Detection Feature Creation
+```{r}
+sum_sobel_feature = rep(NA, l)
+std_sobel_feature = rep(NA, l)
+zero_sobel_feature = rep(NA, l)
+range_sobel_feature = rep(NA, l)
+iqr_sobel_feature = rep(NA, l)
+sum_canny_feature = rep(NA, l)
+zero_canny_feature = rep(NA, l)
+
+for(j in 1:l){
+    img = rescale(as.matrix(test_df$mat[[j]], rownames = seq(1,288,1), colnames = seq(1,192,1)), c(0, 255))
+    new_image_sobel = edge.detect(img, thresh1=1, thresh2=15, noise="gaussian", noise.s=5, method = "Sobel")
+    new_image_canny = edge.detect(img, thresh1=1, thresh2=15, noise="gaussian", noise.s=5, method = "Canny")
+    sum_sobel_feature[j] <- sum(new_image_sobel)
+    std_sobel_feature[j] <- sd(new_image_sobel)
+    zero_sobel_feature[j] <- sum(new_image_sobel == 0)
+    range_sobel_feature[j] <- max(new_image_sobel) - min(new_image_sobel)
+    iqr_sobel_feature[j] <- IQR(new_image_sobel)
+    sum_canny_feature[j] <- sum(new_image_canny)
+    zero_canny_feature[j] <- sum(new_image_canny == 0)
+}
+
+test.X <- cbind(test.X, data.frame("sum_sobel"=sum_sobel_feature, 
+                                   "std_sobel"=std_sobel_feature, 
+                                   "zeroes_sobel"=zero_sobel_feature, 
+                                   "range_sobel"=range_sobel_feature, 
+                                   "iqr_sobel"=iqr_sobel_feature, 
+                                   "sum_canny"=sum_canny_feature,  
+                                   "zeroes_canny"=zero_canny_feature))
+
+# Check that the data frame has been updated successfully.
+head(test.X)
+tail(test.X)
+
+```
+
+
+## Make Predictions on the Test Dataset
+```{r}
+if("sum" %in% colnames(test.X)){test.X = subset(test.X, select = -c(sum))}
+
+#Make predictions using Boosted Trees
+pred.test = predict(boost.comp, test.X, n.trees = tree_count, type = "response")
+labels = colnames(pred.test)[apply(pred.test, 1, which.max)]
+result.test.gbm = data.frame("var"=test_df$var, "pred"=labels)
+
+#Predictions on the validation set for double checking
+pred.val = predict(boost.comp, validate.X, n.trees = tree_count, type = "response")
+labels.val = colnames(pred.validate)[apply(pred.val, 1, which.max)]
+result.val.gbm = data.frame("var"=test_df$var, "pred"=labels.val)
+
+#Normalize the predictors for KNN
+test.X.norm <- as.data.frame(lapply(test.X, nor))
+
+#Make predictions using KNN
+knn.pred.test = knn(train.X.norm, test.X.norm, Classes.train, k = 68)
+result.test.KNN = data.frame("var"=test_df$var, "pred"=knn.pred.test)
+
+#Predictions on the validation set for double checking
+knn.pred.val = knn(train.X.norm, validate.X.norm, Classes.train, k = 68)
+result.val.KNN = data.frame("var"=test_df$var, "pred"=knn.pred.val)
+
+#Make predictions using SVC
+svc.pred.test = predict(svm1, test.X)
+result.test.svc = data.frame("var"=test_df$var, "pred"=svc.pred.test)
+
+#Predictions using SVC on the validation set for double checking
+svc.pred.val = predict(svm1, validate.X)
+result.val.svc = data.frame("var"=test_df$var, "pred"=svc.pred.val)
+
+mean(result.test.gbm$pred == result.test.KNN$pred)
+mean(result.test.gbm$pred == result.test.svc$pred)
+mean(result.test.svc$pred == result.test.KNN$pred)
+
+#Majority voting, for democracies sake
+val.pred <- as.factor(
+  ifelse(result.val.gbm$pred == "high" & result.val.KNN$pred == "high", "high",
+         ifelse(result.val.gbm$pred == "high" & result.val.svc$pred == "high", "high",
+                ifelse(result.val.KNN$pred == "high" & result.val.svc$pred == "high", "high",
+                       ifelse(result.val.gbm$pred == "med" & result.val.KNN$pred == "med", "med",
+                              ifelse(result.val.gbm$pred == "med" & result.val.svc$pred == "med", "med",
+                                     ifelse(result.val.KNN$pred == "med" & result.val.svc$pred == "med", "med","low")))))))
+
+result.val = data.frame("var"=test_df$var, "pred"=val.pred)
+
+mean(result.val$pred == Classes.validate)
+
+
+#Majority voting, for democracies sake
+final.pred <- as.factor(
+  ifelse(result.test.gbm$pred == "high" & result.test.KNN$pred == "high", "high",
+         ifelse(result.test.gbm$pred == "high" & result.test.svc$pred == "high", "high",
+                ifelse(result.test.KNN$pred == "high" & result.test.svc$pred == "high", "high",
+                       ifelse(result.test.gbm$pred == "med" & result.test.KNN$pred == "med", "med",
+                              ifelse(result.test.gbm$pred == "med" & result.test.svc$pred == "med", "med",
+                                     ifelse(result.test.KNN$pred == "med" & result.test.svc$pred == "med", "med","low")))))))
+
+result.final = data.frame("var"=test_df$var, "pred"=final.pred)
+
+#Write the final resutls to a CSV and Rdata file for grading
+write.csv(result.final, file = "C:\\MATH561\\Final Project\\result.final.csv", row.names = FALSE)
+save(result.final, file = "result.final.RData")
+```
+
+
+
+
+
+
+#############################################################################################################################################################
+# Appendix
+#############################################################################################################################################################
+
+### Best RF Selection
+```{r}
+importantdf = data.frame(tunedrf$best.model$importance)
+
+```
+
+```{r}
+rownames(importantdf[order(importantdf$MeanDecreaseAccuracy, decreasing = T),])
+
+importantdf$featurescore = importantdf$MeanDecreaseAccuracy*importantdf$MeanDecreaseGini
+
+sortedimportantdf = importantdf[order(importantdf$featurescore, decreasing = T),]
+sortedimportantdf
+
+```
+
+Down-selecting from only those features that had a higher than average featurescore.
+
+```{r}
+plot(importantdf[order(importantdf$featurescore, decreasing = T),]$featurescore, 
+     xlab="Index of Feature", 
+     ylab="\"Feature Importance\"", 
+     ylim=c(0,5), 
+     xlim=c(0,30))
+abline(h=mean(importantdf$featurescore), col="red")
+text(x=1:dim(importantdf)[1],
+     y=sortedimportantdf$featurescore+0.15,
+     labels=rownames(sortedimportantdf),
+     pos=4,
+     srt=20)
+```
+
+This line returns all features which had an above-average impact on model performance.
+```{r}
+meaningfulfeaturenames = rownames(importantdf[order(importantdf$featurescore, decreasing = T),][importantdf[order(importantdf$featurescore, decreasing = T),]$featurescore > mean(importantdf$featurescore),])
+
+```
+
+### Best RF Down-Selection
+```{r}
+tuned_reduced_rf = tune(randomForest,
+                        as.formula('classification~pca_sum_2+pca_sum_1+snrhard30+snrsoft30+snr+imgmean+
+                                   sum+snrsoft20+snrsoft10+snrhard10+snrhard20+iqr_sobel+zeroessnrsoft30+zeroes'), 
+                        data=tune.df,
+                        ranges=list(mtry=seq(1,13),
+                                    ntree=c(10, 50, 100, 500)))
+
+
+```
+
+```{r}
+summary(tuned_reduced_rf)
+
+mean(predict(tuned_reduced_rf$best.model, validate.X)==Classes.validate)
+```
+
+```{r}
+best_downselected_rf = randomForest(Classes.train~pca_sum_2+pca_sum_1+snrhard30+snrsoft30+snr+imgmean+snrsoft20+snrsoft10+snrhard10+snrhard20+iqr_sobel+zeroessnrsoft30+zeroes, 
+                                    data=train.X,
+                                    mtry=3, 
+                                    ntree=50, 
+                                    importance=T)
+
+importance(best_downselected_rf)
+
+mean(predict(best_downselected_rf, validate.X)==Classes.validate)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

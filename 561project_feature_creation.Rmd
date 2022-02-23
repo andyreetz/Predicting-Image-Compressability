@@ -1,0 +1,498 @@
+---
+title: "DSCI 561 - Group Project"
+author: "Morgan Cox, Alex Gonzales, Kael Kleckner, Andrew Reetz"
+date: "12/13/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen = 1, digits = 3)
+```
+
+## Load Libraries
+```{r}
+rm(list=ls())
+library(ISLR)
+library(e1071) # for svm()
+library(EbayesThresh) # for soft and hard thresholding; threshld()
+library(tree) # for decision trees
+library(randomForest)
+library(MASS) # for LDA
+library(stats) # for fft, ifft
+library(RVenn) # for multi-way set intersection
+library(gplots)
+library(wvtool) # for edge detection
+library(scales) # for image re-scaling to work with edge detection
+```
+
+
+
+```{r}
+# Load the data. The data is structured as a list containing two variables, mat and var.
+# The data consists of climate model output at ten separate time slices for multiple climate variables.
+# The mat variable is a list where each element is the dataset for a single variable at a single time slice, 
+# stored as a matrix. The elements in the var variable are the variable names and frequencies corresponding 
+# to each dataset. The ith element in the var variable corresponds to the name and output frequency of
+# the ith element in the mat variable.
+load("./High/high_train.RData")
+load("./Med/med_train.RData")
+load("./Low/low_train.RData")
+load("./High/high_validate.RData")
+load("./Med/med_validate.RData")
+load("./Low/low_validate.RData")
+```
+
+
+```{r}
+# Here are the values for a single dataset
+high_train$mat[[170]]
+# And here are the variable names corresponding to all the datasets in high_train. The first dataset shown above corresponds to the monthly variable BURDENDUST.
+high_train$var
+
+# Once the data is loaded, a single dataset can be plotted using image()
+# More information about each variable including full name and units is located at
+# https://www.cesm.ucar.edu/projects/community-projects/DPLE/data-sets.html
+```
+
+```{r}
+# Select data and axis labels
+n=170
+selected_dataset <- high_train
+l <- length(selected_dataset$mat)
+latitudes <- round(as.numeric(colnames(selected_dataset$mat[[n]])))
+longitudes <- as.numeric(rownames(selected_dataset$mat[[n]]))
+dataset <- selected_dataset$mat[[n]]
+varname <- selected_dataset$var[n]
+
+# Plot
+image(dataset, main=varname, col = hcl.colors(100, "Blue-Red"),
+      axes=FALSE, xlab="Longitude", ylab="Latitude")
+axis(3, at=seq(0,1, length=7), labels=longitudes[seq(1, 288, length.out=7)],
+     lwd=0, pos=-0.2, outer=T)
+axis(2, at=seq(1,0, length=9), labels=latitudes[seq(1, 192, length.out=9)],
+     lwd=0, pos=0)
+```
+
+# Initial Dataframe creation can global feature engineering
+
+## Initial Data Frame Creation
+```{r}
+# First, create features and put the features and observations into a data frame.
+# This sample feature adds up the value of every element in the dataset, in case variables with larger
+# magnitude values tend to have different optimal compression levels. The sample features should be computed for
+# every dataset and added to the data frame, along with the classification for the dataset.
+
+df <- data.frame()
+ds_list <- list(high_train, med_train, low_train, high_validate, med_validate, low_validate)
+classifications = c("high", "med", "low")
+class_index = rep(c(1, 2, 3), 2)
+for (i in 1:length(ds_list)){
+  l <- length(ds_list[[i]]$mat)
+  sum_feature = rep(NA, l)
+  for(j in 1:l){
+    sum_feature[j] <- sum(ds_list[[i]]$mat[[j]])
+  }
+  classification = classifications[class_index[i]]
+  df <- rbind(df, data.frame("sum"=sum_feature, "classification"=rep(classification, l)))
+}
+df$classification <- as.factor(df$classification)
+
+# Check that the data frame has been created successfully
+
+head(df)
+tail(df)
+plot(df$sum)
+shapiro.test(df$sum)
+boxplot(split(df$sum, df$classification), main = "Sum of Values", col = c("red", "green", "blue"))
+
+
+max_train_index = length(high_train$var) + length(med_train$var) + length(low_train$var)
+train_indices = 1:max_train_index
+validate_indices = (max_train_index + 1):length(df$classification)
+```
+
+## Add more global statistics as Features
+```{r}
+z <- c()
+r <- c()
+s <- c()
+iq <- c()
+m <- c()
+for (i in 1:length(ds_list)){
+  l <- length(ds_list[[i]]$mat)
+  zero_feature = rep(NA, l)
+  range_feature = rep(NA, l)
+  stdev_feature = rep(NA, l)
+  iqr_feature = rep(NA, l)
+  mean_feature = rep(NA, l)
+  for(j in 1:l){
+    zero_feature[j] <- sum(ds_list[[i]]$mat[[j]] == 0)
+    range_feature[j] <- max(ds_list[[i]]$mat[[j]]) - min(ds_list[[i]]$mat[[j]])
+    stdev_feature[j] <- sd(ds_list[[i]]$mat[[j]])
+    iqr_feature[j] <- IQR(ds_list[[i]]$mat[[j]])
+    mean_feature[j] <- mean(ds_list[[i]]$mat[[j]])
+  }
+  z <- c(z, zero_feature)
+  r <- c(r, range_feature)
+  s <- c(s, stdev_feature)
+  iq <- c(iq, iqr_feature)
+  m <- c(m, mean_feature)
+}
+df <- cbind(df, data.frame("zeroes"=z, "range"=r, "stdev"=s, "iqr"=iq, "imgmean"=m))
+
+# Check that the data frame has been updated successfully.
+
+head(df)
+tail(df)
+```
+
+## Plot Global Features by Class
+```{r}
+boxplot(split(df$zeroes, df$classification), main = "Number of Zeroes in Dataset", col = c("red", "green", "blue"))
+boxplot(split(df$range, df$classification), main = "Range of Values in Dataset", col = c("red", "green", "blue"))
+boxplot(split(df$stdev, df$classification), main = "Standard Deviation of Values in Dataset", col = c("red", "green", "blue"))
+boxplot(split(df$iqr, df$classification), main = "Inter-quartile Range of Values in Dataset", col = c("red", "green", "blue"))
+```
+
+# Add more advanced features
+
+## Signal to noise ratio
+
+### Add a new feature for the signal to noise ratio (SNR) value of the image. Note: $SNR_{img} = \frac{\mu_{img}}{\sigma_{img}}$
+```{r}
+SNR <- function(arr){mean(arr)/sd(arr)}
+
+z <- c()
+for (i in 1:length(ds_list)){
+  l <- length(ds_list[[i]]$mat)
+  snr = rep(NA, l)
+  for(j in 1:l){
+    snr[j] <- SNR(ds_list[[i]]$mat[[j]])
+  }
+  z <- c(z, snr)
+}
+df <- cbind(df, data.frame("snr"=z))
+
+# Check that the data frame has been updated successfully.
+
+head(df)
+tail(df)
+```
+
+### Thresholding Features
+Add a new feature for the snr of thresholded versions 10%, 20%, etc. (both soft and hard) of the image. Also calculate the number of "induced" zeroes from the thresholding.
+
+```{r}
+thresh=0.1
+
+z <- c()
+zz <- c()
+for (i in 1:length(ds_list)){
+  l <- length(ds_list[[i]]$mat)
+  snrsoft10 = rep(NA, l) # 
+  zeroessnrsoft10 = rep(NA, l)
+  for(j in 1:l){
+    mat = ds_list[[i]]$mat[[j]]
+    threshedmat = threshld(x=mat,
+                           t=(max(mat)-min(mat))*thresh,
+                           hard=F)
+    snrsoft10[j] <- SNR(threshedmat)
+    zeroessnrsoft10[j] <- sum(threshedmat==0)
+    }
+  z <- c(z, snrsoft10)
+  zz <- c(zz, zeroessnrsoft10)
+}
+df <- cbind(df, data.frame("snrsoft10"=z))
+df <- cbind(df, data.frame("zeroessnrsoft10"=zz))
+
+z <- c()
+zz <- c()
+for (i in 1:length(ds_list)){
+  l <- length(ds_list[[i]]$mat)
+  snrhard10 = rep(NA, l) # 
+  zeroessnrhard10 = rep(NA, l)
+  for(j in 1:l){
+    mat = ds_list[[i]]$mat[[j]]
+    threshedmat = threshld(x=mat,
+                           t=(max(mat)-min(mat))*thresh,
+                           hard=T)
+    snrhard10[j] <- SNR(threshedmat)
+    zeroessnrhard10[j] <- sum(threshedmat==0)
+    
+    }
+  z <- c(z, snrhard10)
+  zz <- c(zz, zeroessnrhard10)
+}
+df <- cbind(df, data.frame("snrhard10"=z))
+df <- cbind(df, data.frame("zeroessnrhard10"=zz))
+
+```
+
+```{r}
+
+thresh=0.2
+
+z <- c()
+zz <- c()
+for (i in 1:length(ds_list)){
+  l <- length(ds_list[[i]]$mat)
+  snrsoft20 = rep(NA, l)
+  zeroessnrsoft20 = rep(NA, l)
+  for(j in 1:l){
+    mat = ds_list[[i]]$mat[[j]]
+    threshedmat = threshld(x=mat,
+                           t=(max(mat)-min(mat))*thresh,
+                           hard=F)
+    snrsoft20[j] <- SNR(threshedmat)
+    zeroessnrsoft20[j] <- sum(threshedmat==0)
+    }
+  z <- c(z, snrsoft20) 
+  zz <- c(zz, zeroessnrsoft20)
+}
+
+df <- cbind(df, data.frame("snrsoft20"=z))
+df <- cbind(df, data.frame("zeroessnrsoft20"=zz))
+
+
+z <- c()
+zz <- c()
+for (i in 1:length(ds_list)){
+  l <- length(ds_list[[i]]$mat)
+  snrhard20 = rep(NA, l) 
+  zeroessnrhard20 = rep(NA, l)
+
+  for(j in 1:l){
+    mat = ds_list[[i]]$mat[[j]]
+    threshedmat = threshld(x=mat,
+                           t=(max(mat)-min(mat))*thresh,
+                           hard=T)
+    snrhard20[j] <- SNR(threshedmat)
+    zeroessnrhard20[j] <- sum(threshedmat==0)
+    }
+  z <- c(z, snrhard20)
+  zz <- c(zz, zeroessnrhard20)
+}
+df <- cbind(df, data.frame("snrhard20"=z))
+df <- cbind(df, data.frame("zeroessnrhard20"=zz))
+
+```
+
+
+```{r}
+thresh=0.3
+
+z <- c()
+zz <- c()
+for (i in 1:length(ds_list)){
+  l <- length(ds_list[[i]]$mat)
+  snrsoft30 = rep(NA, l) 
+  zeroessnrsoft30 = rep(NA, l)
+  for(j in 1:l){
+    mat = ds_list[[i]]$mat[[j]]
+
+    threshedmat = threshld(x=mat,
+                           t=(max(mat)-min(mat))*thresh,
+                           hard=F)
+    snrsoft30[j] <- SNR(threshedmat)
+    zeroessnrsoft30[j] <- sum(threshedmat==0)
+    }
+  z <- c(z, snrsoft30)
+  zz <- c(zz, zeroessnrsoft30)
+}
+df <- cbind(df, data.frame("snrsoft30"=z))
+df <- cbind(df, data.frame("zeroessnrsoft30"=zz))
+
+
+z <- c()
+zz <- c()
+for (i in 1:length(ds_list)){
+  l <- length(ds_list[[i]]$mat)
+  snrhard30 = rep(NA, l) 
+  zeroessnrhard30 = rep(NA, l)
+  for(j in 1:l){
+    mat = ds_list[[i]]$mat[[j]]
+    threshedmat = threshld(x=mat,
+                           t=(max(mat)-min(mat))*thresh,
+                           hard=T)
+    snrhard30[j] <- SNR(threshedmat)
+    zeroessnrhard30[j] = sum(threshedmat==0)
+    }
+  z <- c(z, snrhard30)
+  zz <- c(zz, zeroessnrhard30)
+}
+
+df <- cbind(df, data.frame("snrhard30"=z))
+df <- cbind(df, data.frame("zeroessnrhard30"=zz))
+
+```
+
+## Shannon entropy Feature Creation
+```{r}
+shannon.entropy = function(mat) {
+  densities = hist(mat, plot=F)$counts/length(mat)
+  densities[densities==0] <- NA
+  clean_densities = na.omit(densities)
+  entropy = -sum(clean_densities * log(clean_densities))
+  return(entropy)
+}
+
+s <- c()
+for (i in 1:length(ds_list)){
+  l <- length(ds_list[[i]]$mat)
+  shannonentropy = rep(NA, l)
+  for(j in 1:l){
+    shannonentropy[j] <- shannon.entropy(ds_list[[i]]$mat[[j]])
+  }
+  s <- c(s, shannonentropy)
+}
+df <- cbind(df, data.frame("shannonentropy"=s))
+```
+
+# Principle Component Features
+
+## Sum of First Two Principle Components Feature
+```{r}
+pca <- c()
+for (i in 1:length(ds_list)){
+  l <- length(ds_list[[i]]$mat)
+  pca_feature = rep(NA, l)
+  for(j in 1:l){
+   
+    # Calculate the information for PC explained variance
+    pcs <- prcomp(ds_list[[i]]$mat[[j]])
+    std_dev <- pcs$sdev
+    pr_var <- std_dev^2
+    prop_varex <- pr_var/sum(pr_var)
+   
+    pca_feature[j] = sum(prop_varex[1:2])
+   
+  }
+  pca <- c(pca, pca_feature)
+}
+df <- cbind(df, data.frame("pca_sum_2"=pca))
+
+# Check that the data frame has been updated successfully.
+
+head(df)
+tail(df)
+
+```
+
+## Sum of First Principle Component Feature
+```{r}
+pca <- c()
+for (i in 1:length(ds_list)){
+  l <- length(ds_list[[i]]$mat)
+  pca_feature = rep(NA, l)
+  for(j in 1:l){
+   
+        # Calculate the information for PC explained variance
+    pcs <- prcomp(ds_list[[i]]$mat[[j]])
+    std_dev <- pcs$sdev
+    pr_var <- std_dev^2
+    prop_varex <- pr_var/sum(pr_var)
+   
+    pca_feature[j] = sum(prop_varex[1:1])
+   
+  }
+  pca <- c(pca, pca_feature)
+}
+df <- cbind(df, data.frame("pca_sum_1"=pca))
+```
+
+
+# Edge Detection as Local Gradients
+
+## Sobel Edge Detection
+```{r}
+#Test Edge detection on the example dataset
+img = rescale(as.matrix(high_train$mat[[170]], rownames = seq(1,nrow(high_train$mat[[170]]),1), colnames = seq(1,ncol(high_train$mat[[170]]),1)), c(0, 255))
+new.edge = edge.detect(img, thresh1=1, thresh2=15, noise="gaussian", noise.s=3, method = "Sobel")
+```
+
+## Canny Edge detection
+```{r}
+new.edge.canny = edge.detect(img, thresh1=1, thresh2=15, noise="gaussian", noise.s=5, method = "Canny")
+par(mfrow = c(1,2))
+image(new.edge, col=gray(c(0:255)/255), main="Sobel", useRaster=TRUE, axes=FALSE, asp=1)
+image(new.edge.canny, col=gray(c(0:255)/255), main="Canny", useRaster=TRUE, axes=FALSE, asp=1)
+```
+
+
+```{r}
+par(mfrow = c(1,2))
+image(new.edge, col=gray(c(0:255)/255), main="Sobel", useRaster=TRUE, axes=FALSE, asp=1)
+image(dataset, main=varname, col = hcl.colors(100, "Blue-Red"), axes=FALSE)
+```
+
+
+# Edge Detection Feature Creation
+```{r}
+# Append a new feature, based on the edge detection results
+ds_list <- list(high_train, med_train, low_train, high_validate, med_validate, low_validate)
+sum_sobel <- c()
+std_sobel <- c()
+z_sobel <- c()
+r_sobel <- c()
+iq_sobel <- c()
+sum_canny <- c()
+z_canny <- c()
+
+for (i in 1:length(ds_list)){
+  l <- length(ds_list[[i]]$mat)
+  sum_sobel_feature = rep(NA, l)
+  std_sobel_feature = rep(NA, l)
+  zero_sobel_feature = rep(NA, l)
+  range_sobel_feature = rep(NA, l)
+  iqr_sobel_feature = rep(NA, l)
+  sum_canny_feature = rep(NA, l)
+  zero_canny_feature = rep(NA, l)
+  for(j in 1:l){
+    img = rescale(as.matrix(ds_list[[i]]$mat[[j]], rownames = seq(1,288,1), colnames = seq(1,192,1)), c(0, 255))
+    new_image_sobel = edge.detect(img, thresh1=1, thresh2=15, noise="gaussian", noise.s=5, method = "Sobel")
+    new_image_canny = edge.detect(img, thresh1=1, thresh2=15, noise="gaussian", noise.s=5, method = "Canny")
+    sum_sobel_feature[j] <- sum(new_image_sobel)
+    std_sobel_feature[j] <- sd(new_image_sobel)
+    zero_sobel_feature[j] <- sum(new_image_sobel == 0)
+    range_sobel_feature[j] <- max(new_image_sobel) - min(new_image_sobel)
+    iqr_sobel_feature[j] <- IQR(new_image_sobel)
+    sum_canny_feature[j] <- sum(new_image_canny)
+    zero_canny_feature[j] <- sum(new_image_canny == 0)
+  }
+  sum_sobel <- c(sum_sobel, sum_sobel_feature)
+  std_sobel <- c(std_sobel, std_sobel_feature)
+  z_sobel <- c(z_sobel, zero_sobel_feature)
+  r_sobel <- c(r_sobel, range_sobel_feature)
+  iq_sobel <- c(iq_sobel, iqr_sobel_feature)
+  sum_canny <- c(sum_canny, sum_canny_feature)
+  z_canny <- c(z_canny, zero_canny_feature)
+}
+df <- cbind(df, data.frame("sum_sobel"=sum_sobel, "std_sobel"=std_sobel, "zeroes_sobel"=z_sobel, "range_sobel"=r_sobel, "iqr_sobel"=iq_sobel, "sum_canny"=sum_canny,  "zeroes_canny"=z_canny))
+
+print("data frame created")
+```
+
+```{r}
+# Check that the data frame has been created successfully
+
+head(df)
+tail(df)
+par(mfrow = c(1, 2))
+plot(df$sum_sobel)
+plot(df$std_sobel)
+shapiro.test(df$sum_sobel)
+shapiro.test(df$std_sobel)
+
+par(mfrow = c(1, 2))
+plot(df$sum_canny)
+plot(df$zeroes_canny)
+shapiro.test(df$sum_canny)
+shapiro.test(df$zeroes_canny)
+```
+
+## Export the dataframe to a csv file so we dont have to re-run it everytime
+```{r}
+write.csv(df, file = "C:\\MATH561\\Final Project\\data.csv", row.names = FALSE)
+```
+
