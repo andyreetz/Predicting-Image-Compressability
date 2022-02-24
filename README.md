@@ -19,15 +19,15 @@ We implemented a wide range of classification models including K-Nearest Neighbo
 
 ![Feature Importance of Engineered Features](https://github.com/andyreetz/Predicting-Image-Compressability/blob/main/edge%20detect%20full%20feature%20importance.PNG)
 
-|:Feature:|:Feature Importance:|
-|---||---|
-|snrsoft30|24.179|
-|snr|12.358|
-|pca_sum_2|11.945|
-|iqr_sobel|6.989|
-|zeroes_sobel|5.841|
-|imgmean|5.682|
-|pca_sum_1|3.985|
-|snrsoft20|3.776|
-|shannonentropy|3.349|
-|snrsoft10|2.686|
+| :Feature: | :Feature Importance: |
+| --- || --- |
+| snrsoft30 | 24.179 |
+| snr | 12.358 |
+| pca_sum_2 | 11.945 |
+| iqr_sobel | 6.989 |
+| zeroes_sobel | 5.841 |
+| imgmean | 5.682 |
+| pca_sum_1 | 3.985 |
+| snrsoft20 | 3.776 |
+| shannonentropy | 3.349 |
+| snrsoft10 | 2.686 |
