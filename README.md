@@ -1,5 +1,5 @@
 # Predicting Image Compressability
-Project to predict image compressibility of climate data from CESM-LE
+Project to predict image compressibility of climate data from CESM-LE using classification methods in R
 
 ![Edge Detection Example](https://github.com/andyreetz/Predicting-Image-Compressability/blob/main/edge%20detection%20example%20image.PNG)
 
