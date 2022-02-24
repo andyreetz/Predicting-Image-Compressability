@@ -19,6 +19,7 @@ We implemented a wide range of classification models including K-Nearest Neighbo
 
 ![Feature Importance of Engineered Features](https://github.com/andyreetz/Predicting-Image-Compressability/blob/main/edge%20detect%20full%20feature%20importance.PNG)
 
+
 | :Feature: | :Feature Importance: |
 | --- || --- |
 | snrsoft30 | 24.179 |
@@ -31,3 +32,10 @@ We implemented a wide range of classification models including K-Nearest Neighbo
 | snrsoft20 | 3.776 |
 | shannonentropy | 3.349 |
 | snrsoft10 | 2.686 |
+
+
+
+| First Header  | Second Header |
+| ------------- | ------------- |
+| Content Cell  | Content Cell  |
+| Content Cell  | Content Cell  |
