@@ -18,3 +18,16 @@ normality.
 We implemented a wide range of classification models including K-Nearest Neighbors (KNN), Support Vector Classifier (SVC), and Random Forest to asses our initial feature creation and benchmark accuracy. Although some of the features exhibited interesting trends, the excessive time to create some of these features led us to exclude them and focus on features that would appear to have more significance at lower cost. Once the features were engineered, we implemented a majority-vote ensemble model using KNN, Boosted Trees, and SVC together to predict image compression classification, which achieved a 91% classification accuracy on the validation set. Surprisingly, global statistics such as signal to noise ratio showed high importance for predicting the image compression. Adding localized gradients improved accuracy, but these features were not as significant as anticipated. This might mean the the spatial granularity of the image is not a significant factor in its compress-ability. Although our group’s final ensemble model achieved a 91% classification accuracy on the validation set, this does not mean that the model is highly interpretable. As long as classification accuracy is the primary concern, one potential route forward would be to train additional models to participate in the voting process, such as LDA or QDA. Although our current models are reasonably resistant to non-normality, some scaling of the data is required (as in KNN). Including LDA or QDA in the ensemble would require more deeply assessing the effects of different data normalizing and/or scaling procedures on the bias and variance of our model’s predictions. Additionally, some of the engineered features are highly correlated, such as the Range and IQR of edge detection values, which may lead to multicollinearlity and decrease model interpretability or accuracy. Future work in this area could involve removing unhelpful or mostly redundant features.
 
 ![Feature Importance of Engineered Features](https://github.com/andyreetz/Predicting-Image-Compressability/blob/main/edge%20detect%20full%20feature%20importance.PNG)
+
+|:Feature:|:Feature Importance:|
+|---||---|
+|snrsoft30|24.179|
+|snr|12.358|
+|pca_sum_2|11.945|
+|iqr_sobel|6.989|
+|zeroes_sobel|5.841|
+|imgmean|5.682|
+|pca_sum_1|3.985|
+|snrsoft20|3.776|
+|shannonentropy|3.349|
+|snrsoft10|2.686|
