@@ -21,7 +21,7 @@ We implemented a wide range of classification models including K-Nearest Neighbo
 
 
 | :Feature: | :Feature Importance: |
-| --- || --- |
+| --- | --- |
 | snrsoft30 | 24.179 |
 | snr | 12.358 |
 | pca_sum_2 | 11.945 |
